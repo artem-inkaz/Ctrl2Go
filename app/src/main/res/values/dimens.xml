@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="margin_end">40dp</dimen>
+    <dimen name="margin_right">40dp</dimen>
+    <dimen name="margin_bottom">56dp</dimen>
+    <dimen name="margin_tv">20dp</dimen>
+    <dimen name="margin_top_longitude_tv">10dp</dimen>
+</resources>

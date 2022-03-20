@@ -2,4 +2,6 @@
     <string name="app_name">Ctrl2Go</string>
     <string name="latitude">Latitude</string>
     <string name="longitude">Longitude</string>
+    <string name="current_latitude">Широта: %1$s</string>
+    <string name="current_longitude">Долгота: %1$s</string>
 </resources>

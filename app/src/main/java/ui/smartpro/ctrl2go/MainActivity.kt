@@ -3,6 +3,7 @@ package ui.smartpro.ctrl2go
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.res.Resources
 import android.graphics.BitmapFactory
 import android.location.LocationManager
 import android.os.Build
@@ -15,17 +16,25 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.content.ContextCompat
-import androidx.core.view.postDelayed
 import com.mapbox.android.gestures.MoveGestureDetector
+import com.mapbox.common.Cancelable
+import com.mapbox.common.TileRegionLoadOptions
+import com.mapbox.geojson.Feature
+import com.mapbox.geojson.FeatureCollection
 import com.mapbox.geojson.Point
 import com.mapbox.mapboxsdk.Mapbox
 import com.mapbox.mapboxsdk.maps.Style
 import com.mapbox.maps.CameraOptions
+import com.mapbox.maps.EdgeInsets
+import com.mapbox.maps.Image
 import com.mapbox.maps.extension.style.expressions.dsl.generated.interpolate
 import com.mapbox.maps.extension.style.image.image
 import com.mapbox.maps.extension.style.layers.generated.symbolLayer
 import com.mapbox.maps.extension.style.layers.properties.generated.IconAnchor
+import com.mapbox.maps.extension.style.sources.generated.GeoJsonSource
 import com.mapbox.maps.extension.style.sources.generated.geoJsonSource
+import com.mapbox.maps.extension.style.sources.getSource
+import com.mapbox.maps.extension.style.sources.getSourceAs
 import com.mapbox.maps.extension.style.style
 import com.mapbox.maps.plugin.LocationPuck2D
 import com.mapbox.maps.plugin.gestures.OnMoveListener
@@ -33,7 +42,12 @@ import com.mapbox.maps.plugin.gestures.gestures
 import com.mapbox.maps.plugin.locationcomponent.OnIndicatorBearingChangedListener
 import com.mapbox.maps.plugin.locationcomponent.OnIndicatorPositionChangedListener
 import com.mapbox.maps.plugin.locationcomponent.location
+import com.mapbox.search.*
+import com.mapbox.search.Country.Companion.RUSSIA
+import com.mapbox.search.result.SearchResult
+import com.mapbox.search.result.SearchSuggestion
 import ui.smartpro.ctrl2go.databinding.ActivityMainBinding
+import ui.smartpro.ctrl2go.utils.DataConstants.Companion.searchObject
 import java.lang.ref.WeakReference
 
 class MainActivity : AppCompatActivity() {
@@ -50,6 +64,11 @@ class MainActivity : AppCompatActivity() {
 
     var locationAustrlan = -25.0
     var locationAustrlong = 135.0
+    private lateinit var searchEngine: OfflineSearchEngine
+    private lateinit var tilesLoadingTask: Cancelable
+    private var categorySearchEngine: CategorySearchEngine? = null
+    private var searchRequestTask: SearchRequestTask? = null
+    private var markerCoordinates = mutableListOf<Point>()
 
     private val permReqLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
@@ -62,6 +81,64 @@ class MainActivity : AppCompatActivity() {
                 checkGPSPermission()
             }
         }
+
+    val categorySearchCallback = object : SearchCallback {
+        override fun onError(e: Exception) {
+            Log.i("SearchApiExample", "Search error", e)
+        }
+
+        override fun onResults(results: List<SearchResult>, responseInfo: ResponseInfo) {
+            if (results.isEmpty()) {
+                Log.i("SearchApiExample", "No category search results")
+            } else {
+                Log.i("SearchApiExample", "Category search results: $results")
+                searchObject?.results = results
+                showMarkers(results.mapNotNull { it.coordinate })
+            }
+        }
+    }
+
+    private val engineReadyCallback = object : OfflineSearchEngine.EngineReadyCallback {
+        override fun onEngineReady() {
+            Log.i("SearchApiExample", "Engine is ready")
+        }
+
+        override fun onError(e: Exception) {
+            Log.i("SearchApiExample", "Error during engine initialization", e)
+        }
+    }
+
+    private val searchCallback = object : SearchSelectionCallback {
+
+        override fun onSuggestions(suggestions: List<SearchSuggestion>, responseInfo: ResponseInfo) {
+            if (suggestions.isEmpty()) {
+                Log.i("SearchApiExample", "No suggestions found")
+            } else {
+                Log.i("SearchApiExample", "Search suggestions: $suggestions.\nSelecting first suggestion...")
+                searchRequestTask = searchEngine.select(suggestions.first(), this)
+            }
+        }
+
+        override fun onResult(
+            suggestion: SearchSuggestion,
+            result: SearchResult,
+            responseInfo: ResponseInfo
+        ) {
+            Log.i("SearchApiExample", "Search result: $result")
+        }
+
+        override fun onCategoryResult(
+            suggestion: SearchSuggestion,
+            results: List<SearchResult>,
+            responseInfo: ResponseInfo
+        ) {
+            Log.i("SearchApiExample", "Category search results: $results")
+        }
+
+        override fun onError(e: Exception) {
+            Log.i("SearchApiExample", "Search error", e)
+        }
+    }
 
     private val onIndicatorBearingChangedListener = OnIndicatorBearingChangedListener {
         binding.mapView.getMapboxMap().setCamera(CameraOptions.Builder().bearing(it).build())
@@ -92,6 +169,8 @@ class MainActivity : AppCompatActivity() {
             locationPermissionHelper.checkPermissions {
                 onMapReady()
             }
+            categorySearch()
+            offLineSearch()
         }
     }
 
@@ -101,12 +180,59 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         manager = this.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
         checkGPSPermission()
         getMyPosition()
-        if (locationlat != null && locationlong != null)
-            binding.mapView.postDelayed(2000) {
-                marker()
+    }
+
+    private fun offLineSearch() {
+        searchEngine = MapboxSearchSdk.getOfflineSearchEngine()
+        searchEngine.addEngineReadyCallback(engineReadyCallback)
+
+        val tileStore = searchEngine.tileStore
+
+        val dcLocation = locationlat?.let { locationlong?.let { it1 -> Point.fromLngLat(it1, it) } }
+
+        val descriptors = listOf(searchEngine.createTilesetDescriptor())
+
+        val tileRegionLoadOptions = TileRegionLoadOptions.Builder()
+            .descriptors(descriptors)
+            .geometry(dcLocation)
+            .acceptExpired(true)
+            .build()
+
+        Log.i("SearchApiExample", "Loading tiles...")
+
+        tilesLoadingTask = tileStore.loadTileRegion(
+            "Novosibirsk",
+            tileRegionLoadOptions,
+            { progress -> Log.i("SearchApiExample", "Loading progress: $progress") },
+            { region ->
+                if (region.isValue) {
+                    Log.i("SearchApiExample", "Tiles successfully loaded")
+                    searchRequestTask = searchEngine.search(
+                        "bicycle",
+                        OfflineSearchOptions(),
+                        searchCallback
+                    )
+                } else {
+                    Log.i("SearchApiExample", "Tiles loading error: ${region.error}")
+                }
             }
+        )
+    }
+
+    private fun categorySearch() {
+        categorySearchEngine = MapboxSearchSdk.getCategorySearchEngine()
+        val options: CategorySearchOptions = CategorySearchOptions.Builder()
+            .countries(RUSSIA)
+            .limit(20)
+            .build()
+        searchRequestTask = categorySearchEngine!!.search(
+            "bicycle",
+            options,
+            categorySearchCallback
+        )
     }
 
     private fun getMapData() {
@@ -160,7 +286,7 @@ class MainActivity : AppCompatActivity() {
     private fun onMapReady() {
         binding.mapView.getMapboxMap().setCamera(
             CameraOptions.Builder()
-                .zoom(18.0)
+                .zoom(8.0)
                 .build()
         )
         binding.mapView.getMapboxMap().loadStyleUri(
@@ -180,27 +306,31 @@ class MainActivity : AppCompatActivity() {
                 resources.getString(R.string.current_longitude),
                 locationlong.toString()
             )
-            if (locationlat != null && locationlong != null) {
-                marker()
-            }
         }
     }
-
-    private fun marker() {
-        binding.mapView.getMapboxMap().also {
-            it.setCamera(
-                CameraOptions.Builder()
-                    .center(Point.fromLngLat(locationlong!!, locationlat!!))
-                    .zoom(18.0)
-                    .build()
+    private fun initAddMarker() {
+        val symbolLayers = ArrayList<Feature>()
+        for (register in markerCoordinates.indices) {
+            symbolLayers.add(
+                Feature.fromGeometry(
+                    Point.fromLngLat(
+                        markerCoordinates[register].longitude(),
+                        markerCoordinates[register].latitude()
+                    )
+                )
             )
-        }.loadStyle(
-            styleExtension = style(com.mapbox.maps.Style.MAPBOX_STREETS) {
+        }
+        binding.mapView.getMapboxMap().loadStyle(
+            styleExtension = style(com.mapbox.maps.Style.SATELLITE_STREETS) {
                 +image(RED_ICON_ID) {
                     bitmap(BitmapFactory.decodeResource(resources, R.drawable.red_marker))
                 }
                 +geoJsonSource(SOURCE_ID) {
-                    geometry(Point.fromLngLat(locationlat!!, locationlong!!))
+                    featureCollection(
+                        FeatureCollection.fromFeatures(
+                            symbolLayers
+                        )
+                    )
                 }
                 +symbolLayer(LAYER_ID, SOURCE_ID) {
                     iconImage(RED_ICON_ID)
@@ -208,6 +338,46 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    private fun showMarkers(coordinates: List<Point>) {
+        if (coordinates.isEmpty()) {
+            clearMarkers()
+            return
+        } else if (coordinates.size == 1) {
+            showMarker(coordinates.first())
+            return
+        }
+        showMarkers2(coordinates)
+    }
+
+    private fun showMarker(coordinate: Point) {
+        showMarkers2(listOf(coordinate))
+    }
+
+    private fun showMarkers2(coordinates: List<Point>) {
+        markerCoordinates.clear()
+        markerCoordinates.addAll(coordinates)
+        markerCoordinates.add(Point.fromLngLat(locationlat!!, locationlong!!))
+        initAddMarker()
+    }
+
+    private fun updateMarkersOnMap() {
+        binding.mapView.getMapboxMap().getStyle()?.
+             addImage(RED_ICON_ID,BitmapFactory.decodeResource(resources, R.drawable.red_marker))
+        binding.mapView.getMapboxMap().getStyle()?.
+                getSourceAs<GeoJsonSource>(SOURCE_ID)?.featureCollection(
+            FeatureCollection.fromFeatures(
+                markerCoordinates.map {
+                    Feature.fromGeometry(it)
+                }
+            )
+        )
+    }
+
+    private fun clearMarkers() {
+        markerCoordinates.clear()
+        updateMarkersOnMap()
     }
 
     private fun setupGesturesListener() {
@@ -280,6 +450,7 @@ class MainActivity : AppCompatActivity() {
             .removeOnIndicatorPositionChangedListener(onIndicatorPositionChangedListener)
         binding.mapView.gestures.removeOnMoveListener(onMoveListener)
         Log.d("State", "onDestroy()")
+        searchRequestTask!!.cancel()
     }
 
     override fun onLowMemory() {
@@ -302,8 +473,13 @@ class MainActivity : AppCompatActivity() {
             Manifest.permission.ACCESS_FINE_LOCATION
         )
         private const val RED_ICON_ID = "red"
+        private const val YELLOW_ICON_ID = "yellow"
         private const val SOURCE_ID = "source_id"
         private const val LAYER_ID = "layer_id"
+
+        fun dpToPx(dp: Int): Int {
+            return (dp * Resources.getSystem().displayMetrics.density).toInt()
+        }
     }
 }
 

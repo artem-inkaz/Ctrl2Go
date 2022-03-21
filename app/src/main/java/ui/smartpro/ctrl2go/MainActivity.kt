@@ -69,6 +69,7 @@ class MainActivity : AppCompatActivity() {
     private var categorySearchEngine: CategorySearchEngine? = null
     private var searchRequestTask: SearchRequestTask? = null
     private var markerCoordinates = mutableListOf<Point>()
+
     private val permReqLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             val granted = permissions.entries.all {
@@ -182,11 +183,6 @@ class MainActivity : AppCompatActivity() {
 
         checkGPSPermission()
         getMyPosition()
-//        if (locationlat != null && locationlong != null)
-//            binding.mapView.postDelayed(2000) {
-//                marker()
-////                markers()
-//            }
     }
 
     private fun offLineSearch() {
@@ -310,81 +306,21 @@ class MainActivity : AppCompatActivity() {
                 resources.getString(R.string.current_longitude),
                 locationlong.toString()
             )
-            if (locationlat != null && locationlong != null) {
-                showMarkers(markerCoordinates)
-//                binding.mapView.postDelayed(2000) {
-//                    marker()
-                    if (markerCoordinates.isNotEmpty()) {
-                        for (register in markerCoordinates.indices) {
-                            markers(register)
-//                            marker2(register)
-                        }
-                    }
-//                }
-            }
         }
     }
-
-    private fun marker2(register: Int) {
-        binding.mapView.getMapboxMap()
-//            .also {
-//            it.setCamera(
-//                CameraOptions.Builder()
-//                    .center(Point.fromLngLat(locationlong!!, locationlat!!))
-//                    .zoom(18.0)
-//                    .build()
-//            )
-//        }
-            .loadStyle(
-            styleExtension = style(com.mapbox.maps.Style.MAPBOX_STREETS) {
-                +image(RED_ICON_ID) {
-                    bitmap(BitmapFactory.decodeResource(resources, R.drawable.marker))
-                }
-                +geoJsonSource(SOURCE_ID) {
-                    geometry(Point.fromLngLat(markerCoordinates[register].longitude(),
-                        markerCoordinates[register].latitude()))
-                }
-                +symbolLayer(LAYER_ID, SOURCE_ID) {
-                    iconImage(RED_ICON_ID)
-                    iconAnchor(IconAnchor.BOTTOM)
-                }
-            }
-        )
-    }
-
-//    private fun marker() {
-//        binding.mapView.getMapboxMap().also {
-//            it.setCamera(
-//                CameraOptions.Builder()
-//                    .center(Point.fromLngLat(locationlong!!, locationlat!!))
-//                    .zoom(18.0)
-//                    .build()
-//            )
-//        }.loadStyle(
-//            styleExtension = style(com.mapbox.maps.Style.MAPBOX_STREETS) {
-//                +image(RED_ICON_ID) {
-//                    bitmap(BitmapFactory.decodeResource(resources, R.drawable.red_marker))
-//                }
-//                +geoJsonSource(SOURCE_ID) {
-//                    geometry(Point.fromLngLat(locationlat!!, locationlong!!))
-//                }
-//                +symbolLayer(LAYER_ID, SOURCE_ID) {
-//                    iconImage(RED_ICON_ID)
-//                    iconAnchor(IconAnchor.BOTTOM)
-//                }
-//            }
-//        )
-//    }
-
-    private fun markers(register: Int) {
-        binding.mapView.getMapboxMap().also {
-            it.setCamera(
-                CameraOptions.Builder()
-                    .center(Point.fromLngLat(locationlong!!, locationlat!!))
-                    .zoom(18.0)
-                    .build()
+    private fun initAddMarker() {
+        val symbolLayers = ArrayList<Feature>()
+        for (register in markerCoordinates.indices) {
+            symbolLayers.add(
+                Feature.fromGeometry(
+                    Point.fromLngLat(
+                        markerCoordinates[register].longitude(),
+                        markerCoordinates[register].latitude()
+                    )
+                )
             )
-        }.loadStyle(
+        }
+        binding.mapView.getMapboxMap().loadStyle(
             styleExtension = style(com.mapbox.maps.Style.MAPBOX_STREETS) {
                 +image(RED_ICON_ID) {
                     bitmap(BitmapFactory.decodeResource(resources, R.drawable.red_marker))
@@ -392,16 +328,7 @@ class MainActivity : AppCompatActivity() {
                 +geoJsonSource(SOURCE_ID) {
                     featureCollection(
                         FeatureCollection.fromFeatures(
-                            arrayOf(
-                                Feature.fromGeometry(
-                                Point.fromLngLat(locationlat!!, locationlong!!)),
-                            Feature.fromGeometry(
-                                    Point.fromLngLat(
-                                        markerCoordinates[register].longitude(),
-                                        markerCoordinates[register].latitude()
-                                    )
-                                )
-                            )
+                            symbolLayers
                         )
                     )
                 }
@@ -421,35 +348,18 @@ class MainActivity : AppCompatActivity() {
             showMarker(coordinates.first())
             return
         }
-
-        val cameraOptions = binding.mapView.getMapboxMap()
-            .cameraForCoordinates(
-            coordinates, markersPaddings, bearing = null, pitch = null
-        )
-
-        if (cameraOptions.center == null) {
-            clearMarkers()
-            return
-        }
-
-        showMarkers2(cameraOptions, coordinates)
+        showMarkers2(coordinates)
     }
 
     private fun showMarker(coordinate: Point) {
-        val cameraOptions = CameraOptions.Builder()
-            .center(coordinate)
-            .zoom(10.0)
-            .build()
-
-        showMarkers2(cameraOptions, listOf(coordinate))
+        showMarkers2(listOf(coordinate))
     }
 
-    private fun showMarkers2(cameraOptions: CameraOptions, coordinates: List<Point>) {
+    private fun showMarkers2(coordinates: List<Point>) {
         markerCoordinates.clear()
         markerCoordinates.addAll(coordinates)
-        updateMarkersOnMap()
-
-        binding.mapView.getMapboxMap().setCamera(cameraOptions)
+        markerCoordinates.add(Point.fromLngLat(locationlat!!, locationlong!!))
+        initAddMarker()
     }
 
     private fun updateMarkersOnMap() {
@@ -563,13 +473,10 @@ class MainActivity : AppCompatActivity() {
             Manifest.permission.ACCESS_FINE_LOCATION
         )
         private const val RED_ICON_ID = "red"
+        private const val YELLOW_ICON_ID = "yellow"
         private const val SOURCE_ID = "source_id"
         private const val LAYER_ID = "layer_id"
 
-        val markersPaddings: EdgeInsets = dpToPx(100).toDouble()
-            .let { mapPadding ->
-                EdgeInsets(mapPadding, mapPadding, mapPadding, mapPadding)
-            }
         fun dpToPx(dp: Int): Int {
             return (dp * Resources.getSystem().displayMetrics.density).toInt()
         }

@@ -211,7 +211,7 @@ class MainActivity : AppCompatActivity() {
                 if (region.isValue) {
                     Log.i("SearchApiExample", "Tiles successfully loaded")
                     searchRequestTask = searchEngine.search(
-                        "Cafe",
+                        "bicycle",
                         OfflineSearchOptions(),
                         searchCallback
                     )
@@ -229,7 +229,7 @@ class MainActivity : AppCompatActivity() {
             .limit(20)
             .build()
         searchRequestTask = categorySearchEngine!!.search(
-            "bar",
+            "bicycle",
             options,
             categorySearchCallback
         )
@@ -321,7 +321,7 @@ class MainActivity : AppCompatActivity() {
             )
         }
         binding.mapView.getMapboxMap().loadStyle(
-            styleExtension = style(com.mapbox.maps.Style.MAPBOX_STREETS) {
+            styleExtension = style(com.mapbox.maps.Style.SATELLITE_STREETS) {
                 +image(RED_ICON_ID) {
                     bitmap(BitmapFactory.decodeResource(resources, R.drawable.red_marker))
                 }
